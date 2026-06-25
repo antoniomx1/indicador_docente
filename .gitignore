@@ -2,15 +2,20 @@
 indicador/
 node_modules/
 
+
+
+
 # Variables de entorno (¡Seguridad, caón!)
 .env
 
 # Bases de datos y archivos de prueba locales
 *.db
 *.xlsx
+*.pyc
 
 # Logs, imágenes generadas y copias raras
-*.txt
+debug_whatsapp.txt
+plantilla_credenciales.txt
 qr.png
 *copy*
 
@@ -19,3 +24,4 @@ sessions/
 .wwebjs_auth/
 .wwebjs_cache/
 Mensajes/
+__pycache__/

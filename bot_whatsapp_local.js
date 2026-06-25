@@ -7,6 +7,7 @@ const sqlite3 = require('sqlite3').verbose();
 const dbPath = process.argv[2] || 'indicador_docente.db';
 const semana = process.argv[3] || 1;
 const cuerpoMensajeStreamlit = process.argv[4] || ''; 
+const matriculasFiltradasStr = process.argv[5] || ''; // <-- Recibimos la lista desde Streamlit
 
 const RUTA_TEMPLATES_DIR = path.resolve(process.cwd(), "Mensajes/templates");
 
@@ -58,12 +59,12 @@ function leerLineasOpciones(ruta) {
 
 function parseNombreCorto(completo) {
     if (!completo) return "";
-    return completo.split(" ")[0]; // Corregido el typo de complete -> completo
+    return completo.split(" ")[0];
 }
 
 const soloDigitos = (s) => (s || "").toString().replace(/\D+/g, "");
 
-// === TU FUNCIÓN ESTRELLA ORIGINAL COPIADA TAL CUAL PARA EVITAR EL "NO LID" ===
+// === FUNCIÓN PARA EVITAR EL "NO LID" ===
 async function resolverWid(client, numero) {
   const base = soloDigitos(numero);
   const candidatos = [];
@@ -93,10 +94,20 @@ async function enviarCampanaMamon() {
     logDebug(`[SQLITE] Abriendo base de datos: ${dbPath}`);
     let db = new sqlite3.Database(dbPath);
     
-    const query = `SELECT matricula, nombre_estudiante, celular, estatus_aprobacion FROM historico_tablero WHERE semana_bimestre = ?`;
+    // 1. Armamos la consulta base por semana
+    let query = `SELECT matricula, nombre_estudiante, celular, estatus_aprobacion FROM historico_tablero WHERE semana_bimestre = ?`;
+    let params = [semana];
+
+    // 2. Si recibimos una lista de matrículas específicas, inyectamos el filtro IN (...)
+    if (matriculasFiltradasStr) {
+        const listado = matriculasFiltradasStr.split(',').map(m => `'${m.strip ? m.strip() : m.trim()}'`).join(',');
+        query += ` AND matricula IN (${listado})`;
+        logDebug(`[FILTRO ACTIVO] Solo se enviará a las matrículas del segmento seleccionado.`);
+    }
+
     logDebug(`[SQLITE] Lanzando consulta de alumnos para la semana: ${semana}`);
 
-    db.all(query, [semana], async (err, rows) => {
+    db.all(query, params, async (err, rows) => {
         if (err) { 
             logDebug(`[💥 ERROR SQLITE] No se pudo leer la tabla: ${err.message}`); 
             db.close();
@@ -145,7 +156,6 @@ async function enviarCampanaMamon() {
         let hIdx = { nunca: 0, np: 0, reprobado: 0 };
         let fIdx = { nunca: 0, np: 0, reprobado: 0 };
 
-        // >>> AQUÍ EMPIEZAN LOS CONTADORES <<<
         let enviadosExitosos = 0;
         let rebotados = 0;
         let listaFallidos = [];
@@ -153,7 +163,6 @@ async function enviarCampanaMamon() {
         for (const item of mezcla) {
             const { cat, reg } = item;
             
-            // Tratamiento de nombre corto estilo UTEL
             let primerNombre = reg.nombre_estudiante ? reg.nombre_estudiante.split(" ")[0] : "";
             
             let headerRaw = headers[cat].length ? headers[cat][hIdx[cat] % headers[cat].length] : "";
@@ -184,7 +193,8 @@ async function enviarCampanaMamon() {
                 logDebug(`[🚀 ENVIADO OK] -> ${reg.matricula}`);
                 enviadosExitosos++;
                 
-                db.run(`INSERT INTO logs_interacciones (matricula, semana_bimestre, canal) VALUES (?, ?, 'whatsapp')`, [reg.matricula, semana], (e) => {
+                // Conservamos el registro guardando el estatus actual para que el conteo funcione
+                db.run(`INSERT INTO logs_interacciones (matricula, semana_bimestre, canal, estatus_aprobacion) VALUES (?, ?, 'whatsapp', ?)`, [reg.matricula, semana, reg.estatus_aprobacion], (e) => {
                     if (e) logDebug(`[DB LOG ERR] No se pudo guardar interaccion: ${e.message}`);
                 });
             } catch (e) {

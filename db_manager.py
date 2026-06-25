@@ -30,16 +30,16 @@ def inicializar_db():
     """)
     
     # 3. Tabla de Logs de Envío e Interacción
-    cursor.execute("""
+    cursor.execute('''
     CREATE TABLE IF NOT EXISTS logs_interacciones (
         id_interaccion INTEGER PRIMARY KEY AUTOINCREMENT,
-        matricula TEXT NOT NULL,
-        semana_bimestre INTEGER NOT NULL,
-        canal TEXT NOT NULL,
-        fecha_envio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        respondio INTEGER DEFAULT 0
+        matricula TEXT,
+        semana_bimestre INTEGER,
+        estatus_aprobacion TEXT,  -- ESTA ES LA CHIDA QUE HACE LA MAGIA
+        fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        tipo_mensaje TEXT
     )
-    """)
+    ''')
     
     conn.commit()
     conn.close()

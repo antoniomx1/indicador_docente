@@ -14,6 +14,7 @@ DB_PATH = sys.argv[1] if len(sys.argv) > 1 else 'indicador_docente.db'
 SEMANA = sys.argv[2] if len(sys.argv) > 2 else 1
 ASUNTO_TPL = sys.argv[3] if len(sys.argv) > 3 else 'Aviso Importante UTEL'
 CUERPO_TPL = sys.argv[4] if len(sys.argv) > 4 else 'Hola {nombre}'
+MATRICULAS_STR = sys.argv[5] if len(sys.argv) > 5 else '' # <-- CACHAMOS LAS MATRÍCULAS
 
 EMAIL_USUARIO = os.getenv("UTEL_EMAIL_USER")
 EMAIL_PASSWORD = os.getenv("UTEL_EMAIL_PASS")
@@ -38,26 +39,28 @@ def main():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Buscamos a los alumnos de la semana seleccionada
     try:
-        cursor.execute("SELECT matricula, nombre_estudiante, correo FROM historico_tablero WHERE semana_bimestre = ?", (SEMANA,))
+        # CORRECCIÓN: Agregamos estatus_aprobacion a la consulta para el log
+        query = "SELECT matricula, nombre_estudiante, correo, estatus_aprobacion FROM historico_tablero WHERE semana_bimestre = ?"
+        params = [SEMANA]
+        
+        if MATRICULAS_STR:
+            listado = [f"'{m.strip()}'" for m in MATRICULAS_STR.split(',')]
+            query += f" AND matricula IN ({','.join(listado)})"
+            print(f"🎯 Filtro operativo aplicado para {len(listado)} alumnos.")
+
+        cursor.execute(query, params)
         alumnos = cursor.fetchall()
     except sqlite3.OperationalError as e:
-        print(f"❌ Error de BD: {e}. Verifica que la columna 'correo' exista en tu tabla.")
+        print(f"❌ Error de BD: {e}. Verifica tu tabla.")
         conn.close()
-        return
-        
-    conn.close()
-
-    if not alumnos:
-        print("⚠️ Cero alumnos encontrados para esta semana. Nada que enviar.")
         return
 
     enviados_exitosos = 0
     rebotados = 0
     lista_fallidos = []
 
-    for matricula, nombre_completo, correo_destino in alumnos:
+    for matricula, nombre_completo, correo_destino, estatus_aprobacion in alumnos:
         # Validamos que el correo tenga formato decente
         if not correo_destino or '@' not in str(correo_destino):
             rebotados += 1
@@ -75,6 +78,17 @@ def main():
             enviar_email(correo_destino, asunto_final, cuerpo_final, EMAIL_USUARIO, EMAIL_PASSWORD)
             enviados_exitosos += 1
             print(f"✅ Correo enviado a: {primer_nombre} ({correo_destino})")
+            
+            # --- NUEVO: REGISTRO HISTÓRICO DE LA INTERACCIÓN ---
+            try:
+                cursor.execute("""
+                    INSERT INTO logs_interacciones (matricula, semana_bimestre, canal, estatus_aprobacion)
+                    VALUES (?, ?, 'correo', ?)
+                """, (matricula, int(SEMANA), estatus_aprobacion))
+                conn.commit()
+            except Exception as log_err:
+                print(f"⚠️ Alerta: Se envió el correo pero no se pudo registrar en logs: {log_err}")
+            
             time.sleep(2)  # Seguro anti-spam
         except Exception as e:
             rebotados += 1
@@ -91,6 +105,8 @@ def main():
     if rebotados > 0:
         print(f"👀 Favor de revisar los siguientes contactos: {lista_fallidos}")
     print("="*45)
+    
+    conn.close()
 
 if __name__ == "__main__":
     main()
