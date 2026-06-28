@@ -32,7 +32,7 @@ def normalizar_celular(texto):
         return ""
     return txt_str
 
-def procesar_y_guardar_tablero(ruta_archivo, semana):
+def procesar_y_guardar_tablero(ruta_archivo, semana,bloque):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
@@ -76,18 +76,18 @@ def procesar_y_guardar_tablero(ruta_archivo, semana):
         cel = normalizar_celular(row[col_celular])
         mail = normalizar_texto(row[col_correo])
         est = normalizar_texto(row[col_estatus])
-        
         if not mat or not nom or not cel:
             continue
             
         cursor.execute("""
-            INSERT INTO historico_tablero (matricula, nombre_estudiante, celular, correo, estatus_aprobacion, semana_bimestre, estado_seguimiento)
-            VALUES (?, ?, ?, ?, ?, ?, 'Por Contactar')
+            INSERT INTO historico_tablero (matricula, nombre_estudiante, celular, correo, estatus_aprobacion, semana_bimestre, estado_seguimiento,bloque)
+            VALUES (?, ?, ?, ?, ?, ?, 'Por Contactar',?)
             ON CONFLICT(matricula, semana_bimestre) DO UPDATE SET
                 nombre_estudiante = excluded.nombre_estudiante,
                 celular = excluded.celular,
-                estatus_aprobacion = excluded.estatus_aprobacion
-        """, (mat, nom, cel, mail, est, int(semana)))
+                estatus_aprobacion = excluded.estatus_aprobacion,
+                bloque = excluded.bloque       
+        """, (mat, nom, cel, mail, est, int(semana),bloque))
         
         registros_procesados += 1
         

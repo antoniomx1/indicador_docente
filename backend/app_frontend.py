@@ -19,26 +19,133 @@ st.markdown("---")
 st.sidebar.header("⚙️ Configuración")
 semana_seleccionada = st.sidebar.selectbox("Selecciona la Semana del Bimestre:", options=[1, 2, 3, 4, 5, 6, 7, 8], index=0)
 
+# ========================================================
+#             BUSCADOR EXPRESS EN LA BARRA LATERAL
+# ========================================================
+with st.sidebar:
+    st.markdown("---")
+    st.subheader("🔍 Buscador Express de Alumnos")
+    
+    # Input de texto que acepta matrícula, nombre, cel o correo
+    termino_busqueda = st.text_input("Ingresa Nombre, Matrícula, Teléfono o Correo:")
+    
+    if termino_busqueda:
+        # CONEXIÓN EXPRESS EXCLUSIVA PARA EL BUSCADOR
+        conn_busqueda = sqlite3.connect(DB_PATH)
+        
+        # Query que busca en el histórico y jala el canal del último log registrado
+        query_busqueda = f"""
+            SELECT 
+                h.matricula,
+                h.nombre_estudiante,
+                h.celular,
+                h.correo,
+                h.estatus_aprobacion,
+                h.semana_bimestre,
+                (
+                    SELECT li.canal 
+                    FROM logs_interacciones li 
+                    WHERE li.matricula = h.matricula 
+                    ORDER BY li.semana_bimestre DESC 
+                    LIMIT 1
+                ) as ultimo_canal
+            FROM historico_tablero h
+            WHERE (
+                LOWER(h.nombre_estudiante) LIKE LOWER('%{termino_busqueda}%')
+                OR h.matricula LIKE '%{termino_busqueda}%'
+                OR h.celular LIKE '%{termino_busqueda}%'
+                OR LOWER(h.correo) LIKE LOWER('%{termino_busqueda}%')
+            )
+            ORDER BY h.semana_bimestre DESC
+            LIMIT 3;
+        """
+        
+        df_busqueda = pd.read_sql_query(query_busqueda, conn_busqueda)
+        conn_busqueda.close() # La cerramos de inmediato para no dejarla colgada
+        
+        if not df_busqueda.empty:
+            st.success(f"Se encontraron {len(df_busqueda)} de coincidencias:")
+            for idx, alumno in df_busqueda.iterrows():
+                canal_contacto = alumno['ultimo_canal'] if alumno['ultimo_canal'] else "Sin contacto aún"
+                
+                # Pintamos una tarjeta limpia por cada alumno encontrado
+                st.markdown(
+                    f"""
+                    <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 10px; border-left: 5px solid #2e7d32;">
+                        <span style="font-size: 12px; color: #555;"><b>Semana {alumno['semana_bimestre']}</b></span><br>
+                        <b>🧑‍🎓 {alumno['nombre_estudiante']}</b><br>
+                        🆔 <b>Matrícula:</b> {alumno['matricula']}<br>
+                        📞 <b>Tel:</b> {alumno['celular']}<br>
+                        📧 <b>Correo:</b> {alumno['correo']}<br>
+                        🚨 <b>NR:</b> {alumno['estatus_aprobacion']}<br>
+                        📢 <b>Contactado por:</b> {canal_contacto}
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+        else:
+            st.error("No se encontró ningún alumno con ese dato.")
+
+
+
 # --- SECCIÓN 1: CARGA DE DATOS ---
 st.header("📥 Cargar Tablero Docente")
-archivo_subido = st.file_uploader("Arrastra aquí el archivo Excel o CSV")
+
+# 1. Creamos un contador en el session_state para reiniciar el uploader cuando queramos
+if "contador_uploader" not in st.session_state:
+    st.session_state.contador_uploader = 0
+
+col_bloque, col_upload = st.columns([1, 2])
+
+with col_bloque:
+    st.markdown("**1. Asigna el Bloque:**")
+    bloque_seleccionado = st.selectbox(
+        "¿A qué bloque pertenece este Excel?", 
+        options=["--- Selecciona Bloque ---", "Bloque A", "Bloque D"], 
+        index=0,
+        key="selector_bloque_carga"
+    )
+
+with col_upload:
+    st.markdown("**2. Sube tu archivo:**")
+    # Amárramos la key al contador dinámico para poder resetearlo alv
+    archivo_subido = st.file_uploader(
+        "Arrastra aquí el archivo Excel o CSV", 
+        label_visibility="collapsed",
+        key=f"uploader_excel_{st.session_state.contador_uploader}"
+    )
 
 if archivo_subido is not None:
     nombre_temporal = archivo_subido.name
     with open(nombre_temporal, "wb") as f:
         f.write(archivo_subido.getbuffer())
         
-    if st.button("🚀 Procesar e Inyectar Datos (UPSERT)"):
-        with st.spinner("Procesando..."):
-            try:
-                insertados = procesar_y_guardar_tablero(nombre_temporal, semana_seleccionada)
-                st.success(f"¡Cámara! Se procesaron {insertados} registros para la Semana {semana_seleccionada}.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error en el proceso: {e}")
-            finally:
-                if os.path.exists(nombre_temporal):
-                    os.remove(nombre_temporal)
+    if st.button("🚀 Procesar e Inyectar Datos (UPSERT)", type="primary"):
+        if bloque_seleccionado == "--- Selecciona Bloque ---":
+            st.error("⚠️ ¡AGUAS, CAÓN! Te falta seleccionar el bloque. Recuerda que es un puto peligro inyectar datos sin asignarle el bloque correcto. Elige Bloque A o Bloque D antes de continuar.")
+            if os.path.exists(nombre_temporal):
+                os.remove(nombre_temporal)
+        else:
+            with st.spinner("Procesando e inyectando datos por bloque..."):
+                try:
+                    letra_bloque = bloque_seleccionado.split(" ")[1]
+                    insertados = procesar_y_guardar_tablero(nombre_temporal, semana_seleccionada, letra_bloque)
+                    
+                    # EL TRUCO MAESTRO: Le sumamos 1 al contador para cambiarle la KEY al uploader. 
+                    # Esto hace que Streamlit piense que es un componente nuevo y borre el archivo viejo al tiro.
+                    st.session_state.contador_uploader += 1
+                    
+                    st.success(f"¡Cámara! Se procesaron {insertados} registros del {bloque_seleccionado} para la Semana {semana_seleccionada}.")
+                    
+                    # Le metemos un mini delay de 1.5 segundos para que alcances a ver el letrero verde antes del rerun
+                    import time
+                    time.sleep(1.5)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error en el proceso: {e}")
+                finally:
+                    if os.path.exists(nombre_temporal):
+                        os.remove(nombre_temporal)
 
 st.markdown("---")
 
@@ -69,28 +176,45 @@ try:
     if tabla_existe:
         # Si la tabla existe, ejecutamos tu consulta agrupada perrona
 # Consulta corregida para contar todos los canales
+# --- AHORA SÍ, EL QUERY CORRECTO QUE RESPETA LA EVOLUCIÓN ACADÉMICA ---
         query_agrupada = f"""
+            WITH resumen_semanal AS (
+                SELECT 
+                    h.matricula,
+                    h.estatus_aprobacion,
+                    h.semana_bimestre,
+                    IFNULL(l.total_envios, 0) as envios_esta_semana,
+                    -- LA WINDOW FUNCTION CORREGIDA:
+                    -- Agrupa por matrícula Y POR ESTATUS para que se reinicie si cambia de categoría
+                    SUM(IFNULL(l.total_envios, 0)) OVER (
+                        PARTITION BY h.matricula, h.estatus_aprobacion
+                        ORDER BY h.semana_bimestre
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                    ) as envios_semanas_anteriores
+                FROM historico_tablero h
+                LEFT JOIN (
+                    SELECT matricula, semana_bimestre, estatus_aprobacion, COUNT(*) as total_envios
+                    FROM logs_interacciones
+                    GROUP BY matricula, semana_bimestre, estatus_aprobacion
+                ) l ON h.matricula = l.matricula 
+                   AND h.semana_bimestre = l.semana_bimestre 
+                   AND h.estatus_aprobacion = l.estatus_aprobacion
+            )
             SELECT 
-                h.estatus_aprobacion,
-                IFNULL(l.total_envios, 0) as envios_estatus,
-                COUNT(h.matricula) as total_alumnos
-            FROM historico_tablero h
-            LEFT JOIN (
-                SELECT matricula, semana_bimestre, estatus_aprobacion, COUNT(*) as total_envios
-                FROM logs_interacciones
-                GROUP BY matricula, semana_bimestre, estatus_aprobacion
-            ) l ON h.matricula = l.matricula 
-               AND h.semana_bimestre = l.semana_bimestre 
-               AND h.estatus_aprobacion = l.estatus_aprobacion
-            WHERE h.semana_bimestre = {semana_seleccionada}
-            GROUP BY h.estatus_aprobacion, IFNULL(l.total_envios, 0)
+                estatus_aprobacion,
+                envios_esta_semana as envios_estatus,
+                COUNT(matricula) as total_alumnos,
+                IFNULL(SUM(envios_semanas_anteriores), 0) as envios_semanas_anteriores
+            FROM resumen_semanal
+            WHERE semana_bimestre = {semana_seleccionada}
+            GROUP BY estatus_aprobacion, envios_esta_semana
             ORDER BY 
                 CASE 
-                    WHEN LOWER(h.estatus_aprobacion) LIKE '%nunca%' THEN 1
-                    WHEN LOWER(h.estatus_aprobacion) LIKE '%np%' OR LOWER(h.estatus_aprobacion) LIKE '%participa%' THEN 2
-                    WHEN LOWER(h.estatus_aprobacion) LIKE '%reprob%' THEN 3
-                    WHEN LOWER(h.estatus_aprobacion) LIKE '%por aprobar%' THEN 4
-                    WHEN LOWER(h.estatus_aprobacion) LIKE '%aprobado%' THEN 5
+                    WHEN LOWER(estatus_aprobacion) LIKE '%nunca%' THEN 1
+                    WHEN LOWER(estatus_aprobacion) LIKE '%np%' OR LOWER(estatus_aprobacion) LIKE '%participa%' THEN 2
+                    WHEN LOWER(estatus_aprobacion) LIKE '%reprob%' THEN 3
+                    WHEN LOWER(estatus_aprobacion) LIKE '%por aprobar%' THEN 4
+                    WHEN LOWER(estatus_aprobacion) LIKE '%aprobado%' THEN 5
                     ELSE 6
                 END ASC,
                 envios_estatus ASC
@@ -101,6 +225,7 @@ try:
         if not df_grupos.empty:
             st.subheader("📊 Resumen del Estado de tus Alumnos")
             
+            # --- SECCIÓN DE SELECCIÓN DE CAMPAÑA (Tu lógica se queda intacta) ---
             opciones_campana = []
             for _, fila in df_grupos.iterrows():
                 estatus = fila['estatus_aprobacion']
@@ -108,20 +233,16 @@ try:
                 total = fila['total_alumnos']
                 
                 estatus_lower = estatus.lower()
-                
-                # Definición de colores según tus reglas estratégicas
                 if "nunca" in estatus_lower:
-                    emoji = "🔴"  # Rojo para los Nuncas
+                    emoji = "🔴"
                 elif "np" in estatus_lower or "participa" in estatus_lower:
-                    emoji = "🟠"  # Naranja para los NPs
+                    emoji = "🟠"
                 elif "reprob" in estatus_lower:
-                    emoji = "🟤"  # Un café/gris más amable para los Reprobados en lugar de rojo
-                elif "por aprobar" in estatus_lower:
-                    emoji = "🟢"  # Verde para los que ya van por aprobar
-                elif "aprobado" in estatus_lower:
-                    emoji = "🟢"  # Verde también para los ya aprobados
+                    emoji = "🟤"
+                elif "por aprobar" in estatus_lower or "aprobado" in estatus_lower:
+                    emoji = "🟢"
                 else:
-                    emoji = "🔵"  # Azul por si se cuela otra categoría
+                    emoji = "🔵"
                 
                 label = f"{emoji} {estatus} con {envios} envíos ({total} alumnos)"
                 opciones_campana.append((label, estatus, envios))
@@ -133,34 +254,59 @@ try:
             st.session_state['segmento_estatus'] = opciones_campana[idx_sel][1]
             st.session_state['segmento_envios'] = opciones_campana[idx_sel][2]
             
-# 1. Renombramos las columnas para que se vean profesionales
+            # ========================================================
+            #             EL TUNEO EJECUTIVO DE LA TABLA
+            # ========================================================
+
+            # 1. Renombramos las columnas para que se vea pro
             df_mostrar = df_grupos.rename(columns={
                 'estatus_aprobacion': 'Nivel de Riesgo',
-                'envios_estatus': 'Mensajes Enviados en este Estatus',
-                'total_alumnos': 'Cantidad de Alumnos'
+                'envios_estatus': 'Mensajes (Semana Actual)',
+                'total_alumnos': 'Cantidad de Alumnos',
+                'envios_semanas_anteriores': 'Mensajes Acumulados (Semanas Anteriores)'
             })
 
-            # 2. Función interna para aplicar color suave de fondo a las celdas según el riesgo
+            # 2. Función para colorear el fondo según el nivel de riesgo (Mantenemos tus colores)
             def colorear_riesgo(columna):
                 estilos = []
                 for valor in columna:
                     val_lower = str(valor).lower()
                     if 'nunca' in val_lower:
-                        estilos.append('background-color: #ffcccc; color: #cc0000; font-weight: bold;') # Rojo claro
+                        estilos.append('background-color: #ffcccc; color: #cc0000; font-weight: bold;')
                     elif 'np' in val_lower or 'participa' in val_lower:
-                        estilos.append('background-color: #ffe5cc; color: #cc6600; font-weight: bold;') # Naranja claro
+                        estilos.append('background-color: #ffe5cc; color: #cc6600; font-weight: bold;')
                     elif 'reprob' in val_lower:
-                        estilos.append('background-color: #f2e6d9; color: #663300;') # Café claro estratégico
+                        estilos.append('background-color: #f2e6d9; color: #663300;')
                     elif 'por aprobar' in val_lower or 'aprobado' in val_lower:
-                        estilos.append('background-color: #e5ffcc; color: #006600;') # Verde claro
+                        estilos.append('background-color: #e5ffcc; color: #006600;')
                     else:
                         estilos.append('')
                 return estilos
 
-            # 3. Aplicamos el estilo solo a la columna 'Nivel de Riesgo'
-            df_estilizado = df_mostrar.style.apply(colorear_riesgo, subset=['Nivel de Riesgo'])
+            # 3. Inyección de CSS para forzar el CENTRADO de las celdas y cabeceras de Streamlit
+            st.markdown(
+                """
+                <style>
+                div[data-testid="stDataFrame"] table td {
+                    text-align: center !important;
+                }
+                div[data-testid="stDataFrame"] table th {
+                    text-align: center !important;
+                }
+                </style>
+                """, 
+                unsafe_allow_html=True
+            )
 
-            # 4. Pintamos la tabla ocultando el maldito índice numérico (0, 1, 2...)
+            # 4. Estilizamos las columnas numéricas: Forzamos NEGRITAS, precisión entera y CENTRADO
+            df_estilizado = df_mostrar.style.apply(colorear_riesgo, subset=['Nivel de Riesgo'])\
+                .format(precision=0)\
+                .set_properties(**{
+                    'font-weight': 'bold', 
+                    'text-align': 'center'
+                }, subset=['Mensajes (Semana Actual)', 'Cantidad de Alumnos', 'Mensajes Acumulados (Semanas Anteriores)'])
+
+            # 5. Pintamos la tabla ocultando por fin el índice numérico feo
             st.dataframe(df_estilizado, use_container_width=True, hide_index=True)
             
         else:
