@@ -21,12 +21,19 @@ function logDebug(texto) {
 logDebug(`\n==================================================`);
 logDebug(`[INICIO] Bot despertado. BD=${dbPath}, Semana=${semana}`);
 
+// Detecta dinámicamente la ruta del navegador según el sistema operativo
+const chromePath = process.platform === 'win32' 
+    ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' // Ruta típica en Windows
+    : '/usr/bin/google-chrome';                                   // Ruta en tu Debian Linux
+
+
+
 // Inicializamos el Chrome real de tu Debian
 const client = new Client({
     authStrategy: new LocalAuth({ clientId: "utel_local", dataPath: './.wwebjs_auth' }),
     puppeteer: { 
         headless: false, 
-        executablePath: '/usr/bin/google-chrome',
+        executablePath: chromePath,
         args: [
             "--no-sandbox", 
             "--disable-setuid-sandbox",

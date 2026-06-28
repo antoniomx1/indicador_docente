@@ -133,11 +133,35 @@ try:
             st.session_state['segmento_estatus'] = opciones_campana[idx_sel][1]
             st.session_state['segmento_envios'] = opciones_campana[idx_sel][2]
             
-            st.dataframe(df_grupos.rename(columns={
+# 1. Renombramos las columnas para que se vean profesionales
+            df_mostrar = df_grupos.rename(columns={
                 'estatus_aprobacion': 'Nivel de Riesgo',
-                'envios_estatus': 'Mensajes Recibidos en este Estatus',
+                'envios_estatus': 'Mensajes Enviados en este Estatus',
                 'total_alumnos': 'Cantidad de Alumnos'
-            }), use_container_width=True)
+            })
+
+            # 2. Función interna para aplicar color suave de fondo a las celdas según el riesgo
+            def colorear_riesgo(columna):
+                estilos = []
+                for valor in columna:
+                    val_lower = str(valor).lower()
+                    if 'nunca' in val_lower:
+                        estilos.append('background-color: #ffcccc; color: #cc0000; font-weight: bold;') # Rojo claro
+                    elif 'np' in val_lower or 'participa' in val_lower:
+                        estilos.append('background-color: #ffe5cc; color: #cc6600; font-weight: bold;') # Naranja claro
+                    elif 'reprob' in val_lower:
+                        estilos.append('background-color: #f2e6d9; color: #663300;') # Café claro estratégico
+                    elif 'por aprobar' in val_lower or 'aprobado' in val_lower:
+                        estilos.append('background-color: #e5ffcc; color: #006600;') # Verde claro
+                    else:
+                        estilos.append('')
+                return estilos
+
+            # 3. Aplicamos el estilo solo a la columna 'Nivel de Riesgo'
+            df_estilizado = df_mostrar.style.apply(colorear_riesgo, subset=['Nivel de Riesgo'])
+
+            # 4. Pintamos la tabla ocultando el maldito índice numérico (0, 1, 2...)
+            st.dataframe(df_estilizado, use_container_width=True, hide_index=True)
             
         else:
             st.info("No hay alumnos registrados para esta semana en la base de datos.")
@@ -190,17 +214,15 @@ def obtener_matriculas_segmento(canal_comunicacion):
     query_filtro = f"""
         SELECT h.matricula
         FROM historico_tablero h
-        LEFT JOIN (
-            SELECT matricula, semana_bimestre, estatus_aprobacion, COUNT(*) as total_envios
-            FROM logs_interacciones
-            WHERE canal = '{canal_comunicacion}'
-            GROUP BY matricula, semana_bimestre, estatus_aprobacion
-        ) l ON h.matricula = l.matricula 
-           AND h.semana_bimestre = l.semana_bimestre 
-           AND h.estatus_aprobacion = l.estatus_aprobacion
         WHERE h.semana_bimestre = {semana_seleccionada}
           AND h.estatus_aprobacion = '{estatus_sel}'
-          AND IFNULL(l.total_envios, 0) = {envios_sel}
+          AND (
+              SELECT COUNT(*) 
+              FROM logs_interacciones l 
+              WHERE l.matricula = h.matricula 
+                AND l.semana_bimestre = h.semana_bimestre
+                AND l.estatus_aprobacion = h.estatus_aprobacion 
+          ) = {envios_sel}
     """
     df_mats = pd.read_sql_query(query_filtro, conn)
     conn.close()
@@ -222,7 +244,7 @@ if "WhatsApp" in canal_elegido:
             lista_mats_str = ",".join(matriculas_filtradas)
             
             # Lanzamos el bot
-            subprocess.Popen(["node", "bot_whatsapp_local.js", DB_PATH, str(semana_seleccionada), cuerpo_msg, lista_mats_str],shell=True)
+            subprocess.Popen(["node", "bot_whatsapp_local.js", DB_PATH, str(semana_seleccionada), cuerpo_msg, lista_mats_str])
             
             # --- MONITOR DE PROGRESO ACTIVO ---
             with st.spinner("Espera unos minutos mientras se envian los mensajes..."):
@@ -290,8 +312,7 @@ else:
                 resultado = subprocess.run(
                     ["python3", "bot_correo_local.py", DB_PATH, str(semana_seleccionada), asunto_correo, cuerpo_msg, lista_mats_str],
                     capture_output=True,
-                    text=True,
-                    shell=True
+                    text=True
                 )
                 
             st.balloons()
