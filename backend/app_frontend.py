@@ -183,14 +183,12 @@ try:
                     h.matricula,
                     h.estatus_aprobacion,
                     h.semana_bimestre,
-                    IFNULL(l.total_envios, 0) as envios_esta_semana,
-                    -- LA WINDOW FUNCTION CORREGIDA:
-                    -- Agrupa por matrícula Y POR ESTATUS para que se reinicie si cambia de categoría
                     SUM(IFNULL(l.total_envios, 0)) OVER (
                         PARTITION BY h.matricula, h.estatus_aprobacion
                         ORDER BY h.semana_bimestre
                         ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-                    ) as envios_semanas_anteriores
+                    ) as envios_semanas_anteriores,
+                    IFNULL(l.total_envios, 0) as envios_esta_semana
                 FROM historico_tablero h
                 LEFT JOIN (
                     SELECT matricula, semana_bimestre, estatus_aprobacion, COUNT(*) as total_envios
@@ -202,12 +200,14 @@ try:
             )
             SELECT 
                 estatus_aprobacion,
-                envios_esta_semana as envios_estatus,
                 COUNT(matricula) as total_alumnos,
-                IFNULL(SUM(envios_semanas_anteriores), 0) as envios_semanas_anteriores
+                envios_esta_semana as envios_estatus,
+                -- Dejamos tu columna tal cual, pero directo del CTE, sin el SUM que hacía la marranada
+                IFNULL(envios_semanas_anteriores, 0) as envios_semanas_anteriores
             FROM resumen_semanal
             WHERE semana_bimestre = {semana_seleccionada}
-            GROUP BY estatus_aprobacion, envios_esta_semana
+            -- Metemos la columna al GROUP BY para que rompa las filas por historial
+            GROUP BY estatus_aprobacion, envios_esta_semana, envios_semanas_anteriores
             ORDER BY 
                 CASE 
                     WHEN LOWER(estatus_aprobacion) LIKE '%nunca%' THEN 1
@@ -217,7 +217,8 @@ try:
                     WHEN LOWER(estatus_aprobacion) LIKE '%aprobado%' THEN 5
                     ELSE 6
                 END ASC,
-                envios_estatus ASC
+                envios_estatus ASC,
+                envios_semanas_anteriores DESC
         """
         
         df_grupos = pd.read_sql_query(query_agrupada, conn)
