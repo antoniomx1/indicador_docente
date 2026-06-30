@@ -178,35 +178,39 @@ try:
 # Consulta corregida para contar todos los canales
 # --- AHORA SÍ, EL QUERY CORRECTO QUE RESPETA LA EVOLUCIÓN ACADÉMICA ---
         query_agrupada = f"""
-            WITH resumen_semanal AS (
+            WITH mensajes_anteriores AS (
+                -- 1. Contamos los mensajes del pasado SÓLO si se enviaron estando en el mismo estatus
+                SELECT l.matricula, l.estatus_aprobacion, COUNT(*) as total_acumulado
+                FROM logs_interacciones l
+                WHERE l.semana_bimestre < {semana_seleccionada}
+                GROUP BY l.matricula, l.estatus_aprobacion
+            ),
+            resumen_semanal AS (
                 SELECT 
                     h.matricula,
                     h.estatus_aprobacion,
-                    h.semana_bimestre,
-                    SUM(IFNULL(l.total_envios, 0)) OVER (
-                        PARTITION BY h.matricula, h.estatus_aprobacion
-                        ORDER BY h.semana_bimestre
-                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-                    ) as envios_semanas_anteriores,
-                    IFNULL(l.total_envios, 0) as envios_esta_semana
+                    IFNULL(l_actual.total_envios, 0) as envios_esta_semana,
+                    -- Evaluamos el acumulado pero haciendo match estricto con el estatus actual
+                    IFNULL(ma.total_acumulado, 0) as envios_semanas_anteriores
                 FROM historico_tablero h
                 LEFT JOIN (
-                    SELECT matricula, semana_bimestre, estatus_aprobacion, COUNT(*) as total_envios
+                    SELECT matricula, estatus_aprobacion, COUNT(*) as total_envios
                     FROM logs_interacciones
-                    GROUP BY matricula, semana_bimestre, estatus_aprobacion
-                ) l ON h.matricula = l.matricula 
-                   AND h.semana_bimestre = l.semana_bimestre 
-                   AND h.estatus_aprobacion = l.estatus_aprobacion
+                    WHERE semana_bimestre = {semana_seleccionada}
+                    GROUP BY matricula, estatus_aprobacion
+                ) l_actual ON h.matricula = l_actual.matricula 
+                          AND h.estatus_aprobacion = l_actual.estatus_aprobacion
+                -- Aquí está la magia: el LEFT JOIN amarra matrícula Y ADEMÁS el estatus
+                LEFT JOIN mensajes_anteriores ma ON h.matricula = ma.matricula 
+                                               AND h.estatus_aprobacion = ma.estatus_aprobacion
+                WHERE h.semana_bimestre = {semana_seleccionada}
             )
             SELECT 
                 estatus_aprobacion,
                 COUNT(matricula) as total_alumnos,
                 envios_esta_semana as envios_estatus,
-                -- Dejamos tu columna tal cual, pero directo del CTE, sin el SUM que hacía la marranada
-                IFNULL(envios_semanas_anteriores, 0) as envios_semanas_anteriores
+                envios_semanas_anteriores
             FROM resumen_semanal
-            WHERE semana_bimestre = {semana_seleccionada}
-            -- Metemos la columna al GROUP BY para que rompa las filas por historial
             GROUP BY estatus_aprobacion, envios_esta_semana, envios_semanas_anteriores
             ORDER BY 
                 CASE 
