@@ -46,6 +46,9 @@ def procesar_y_guardar_tablero(ruta_archivo, semana,bloque):
             semana_bimestre INTEGER,
             estado_seguimiento TEXT DEFAULT 'Por Contactar',
             fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            bloque TEXT,
+            calificacion REAL,
+            modalidad TEXT,       
             PRIMARY KEY (matricula, semana_bimestre)
         )
     """)
@@ -62,6 +65,8 @@ def procesar_y_guardar_tablero(ruta_archivo, semana,bloque):
     col_celular = 'CELULAR'
     col_estatus = 'Aprobacion'
     col_correo = 'Correo_estudiante'
+    col_calif = 'calificacion'
+    col_mod = 'Modalidad'
     
     for col in [col_matricula, col_nombre, col_celular, col_estatus]:
         if col not in df.columns:
@@ -76,18 +81,24 @@ def procesar_y_guardar_tablero(ruta_archivo, semana,bloque):
         cel = normalizar_celular(row[col_celular])
         mail = normalizar_texto(row[col_correo])
         est = normalizar_texto(row[col_estatus])
+        calif = row[col_calif] if col_calif in df.columns else 0.0
+        modalidad = normalizar_texto(row[col_mod]) if col_mod in df.columns else "Sin Modalidad"
+
+
         if not mat or not nom or not cel:
             continue
             
         cursor.execute("""
-            INSERT INTO historico_tablero (matricula, nombre_estudiante, celular, correo, estatus_aprobacion, semana_bimestre, estado_seguimiento,bloque)
-            VALUES (?, ?, ?, ?, ?, ?, 'Por Contactar',?)
+            INSERT INTO historico_tablero (matricula, nombre_estudiante, celular, correo, estatus_aprobacion, semana_bimestre, estado_seguimiento,bloque,calificacion,modalidad)
+            VALUES (?, ?, ?, ?, ?, ?, 'Por Contactar',?,?,?)
             ON CONFLICT(matricula, semana_bimestre) DO UPDATE SET
                 nombre_estudiante = excluded.nombre_estudiante,
                 celular = excluded.celular,
                 estatus_aprobacion = excluded.estatus_aprobacion,
-                bloque = excluded.bloque       
-        """, (mat, nom, cel, mail, est, int(semana),bloque))
+                bloque = excluded.bloque,
+                calificacion = excluded.calificacion,
+                modalidad = excluded.modalidad      
+        """, (mat, nom, cel, mail, est, int(semana),bloque,calif,modalidad))
         
         registros_procesados += 1
         

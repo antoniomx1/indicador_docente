@@ -30,64 +30,82 @@ with st.sidebar:
     termino_busqueda = st.text_input("Ingresa Nombre, Matrícula, Teléfono o Correo:")
     
     if termino_busqueda:
-        # CONEXIÓN EXPRESS EXCLUSIVA PARA EL BUSCADOR
         conn_busqueda = sqlite3.connect(DB_PATH)
         
-        # Query que busca en el histórico y jala el canal del último log registrado
+        # Query optimizado: Filtra coincidencias y mediante ROW_NUMBER extrae únicamente la semana más reciente cargada
         query_busqueda = f"""
+            WITH alumnos_filtrados AS (
+                SELECT 
+                    matricula,
+                    nombre_estudiante,
+                    celular,
+                    correo,
+                    estatus_aprobacion,
+                    semana_bimestre,
+                    calificacion,
+                    modalidad,
+                    ROW_NUMBER() OVER (PARTITION BY matricula ORDER BY semana_bimestre DESC) as rn
+                FROM historico_tablero
+                WHERE (
+                    LOWER(nombre_estudiante) LIKE LOWER('%{termino_busqueda}%')
+                    OR matricula LIKE '%{termino_busqueda}%'
+                    OR celular LIKE '%{termino_busqueda}%'
+                    OR LOWER(correo) LIKE LOWER('%{termino_busqueda}%')
+                )
+            )
             SELECT 
-                h.matricula,
-                h.nombre_estudiante,
-                h.celular,
-                h.correo,
-                h.estatus_aprobacion,
-                h.semana_bimestre,
+                f.matricula,
+                f.nombre_estudiante,
+                f.celular,
+                f.correo,
+                f.estatus_aprobacion,
+                f.semana_bimestre,
+                f.calificacion,
+                f.modalidad,
                 (
                     SELECT li.canal 
                     FROM logs_interacciones li 
-                    WHERE li.matricula = h.matricula 
-                    ORDER BY li.semana_bimestre DESC 
+                    WHERE li.matricula = f.matricula 
+                    ORDER BY li.semana_bimestre DESC, li.id_interaccion DESC 
                     LIMIT 1
                 ) as ultimo_canal
-            FROM historico_tablero h
-            WHERE (
-                LOWER(h.nombre_estudiante) LIKE LOWER('%{termino_busqueda}%')
-                OR h.matricula LIKE '%{termino_busqueda}%'
-                OR h.celular LIKE '%{termino_busqueda}%'
-                OR LOWER(h.correo) LIKE LOWER('%{termino_busqueda}%')
-            )
-            ORDER BY h.semana_bimestre DESC
+            FROM alumnos_filtrados f
+            WHERE f.rn = 1
             LIMIT 3;
         """
         
         df_busqueda = pd.read_sql_query(query_busqueda, conn_busqueda)
-        conn_busqueda.close() # La cerramos de inmediato para no dejarla colgada
+        conn_busqueda.close()
         
         if not df_busqueda.empty:
-            st.success(f"Se encontraron {len(df_busqueda)} de coincidencias:")
+            st.success(f"Se encontraron {len(df_busqueda)} coincidencia(s):")
             for idx, alumno in df_busqueda.iterrows():
                 canal_contacto = alumno['ultimo_canal'] if alumno['ultimo_canal'] else "Sin contacto aún"
                 
-                # Pintamos una tarjeta limpia por cada alumno encontrado
+                # Formateamos calóricamente la calificación o la ponemos en 0 si viene vacía
+                calif_val = alumno['calificacion'] if alumno['calificacion'] is not None else 0.0
+                modalidad_val = alumno['modalidad'] if alumno['modalidad'] else "No definida"
+                
+                # Pintamos la tarjeta ejecutiva tuneada con Calificación y Modalidad
                 st.markdown(
                     f"""
-                    <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 10px; border-left: 5px solid #2e7d32;">
-                        <span style="font-size: 12px; color: #555;"><b>Semana {alumno['semana_bimestre']}</b></span><br>
-                        <b>🧑‍🎓 {alumno['nombre_estudiante']}</b><br>
-                        🆔 <b>Matrícula:</b> {alumno['matricula']}<br>
-                        📞 <b>Tel:</b> {alumno['celular']}<br>
-                        📧 <b>Correo:</b> {alumno['correo']}<br>
-                        🚨 <b>NR:</b> {alumno['estatus_aprobacion']}<br>
-                        📢 <b>Contactado por:</b> {canal_contacto}
+                    <div style="background-color: #f0f2f6; padding: 12px; border-radius: 5px; margin-bottom: 10px; border-left: 5px solid #2e7d32; user-select: text !important; -webkit-user-select: text !important; -moz-user-select: text !important; -ms-user-select: text !important;">
+                        <span style="font-size: 11px; color: #666; user-select: text;"><b>Último estado: Semana {alumno['semana_bimestre']}</b></span><br>
+                        <b style="font-size: 15px; user-select: text;">🧑‍🎓 {alumno['nombre_estudiante']}</b><br>
+                        🆔 <b>Matrícula:</b> <span style="user-select: text;">{alumno['matricula']}</span><br>
+                        📞 <b>Tel:</b> <span style="user-select: text;">{alumno['celular']}</span><br>
+                        📧 <b>Correo:</b> <span style="user-select: text;">{alumno['correo']}</span><br>
+                        🎯 <b>Modalidad:</b> <span style="user-select: text;">{modalidad_val}</span><br>
+                        📝 <b>Calificación:</b> <span style="color: blue; font-weight: bold; user-select: text;">{calif_val}</span><br>
+                        🚨 <b>NR:</b> <span style="user-select: text;">{alumno['estatus_aprobacion']}</span><br>
+                        📢 <b>Contactado por:</b> <span style="background-color: #e8f5e9; padding: 2px 5px; border-radius: 3px; font-weight: bold; user-select: text;">{canal_contacto}</span>
                     </div>
                     """,
                     unsafe_allow_html=True
                 )
         else:
             st.error("No se encontró ningún alumno con ese dato.")
-
-
-
+            
 # --- SECCIÓN 1: CARGA DE DATOS ---
 st.header("📥 Cargar Tablero Docente")
 
